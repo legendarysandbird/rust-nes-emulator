@@ -1,3 +1,5 @@
+use crate::opcodes;
+
 pub struct CPU {
     pub register_a: u8,
     pub register_x: u8,
@@ -116,69 +118,16 @@ impl CPU {
     pub fn run(&mut self) {
         loop {
             let code = self.mem_read(self.program_counter);
+            let op = &opcodes::CPU_OP_CODES[&code];
             self.program_counter += 1;
 
             match code {
-                0xA9 => {
-                    self.lda(&AddressingMode::Immediate);
-                    self.program_counter += 1;
-                }
-                0xA5 => {
-                    self.lda(&AddressingMode::ZeroPage);
-                    self.program_counter += 1;
-                }
-                0xB5 => {
-                    self.lda(&AddressingMode::ZeroPage_X);
-                    self.program_counter += 1;
-                }
-                0xAD => {
-                    self.lda(&AddressingMode::Absolute);
-                    self.program_counter += 2;
-                }
-                0xBD => {
-                    self.lda(&AddressingMode::Absolute_X);
-                    self.program_counter += 2;
-                }
-                0xB9 => {
-                    self.lda(&AddressingMode::Absolute_Y);
-                    self.program_counter += 2;
-                }
-                0xA1 => {
-                    self.lda(&AddressingMode::Indirect_X);
-                    self.program_counter += 1;
-                }
-                0xB1 => {
-                    self.lda(&AddressingMode::Indirect_Y);
-                    self.program_counter += 1;
+                0xa9 | 0xa5 | 0xb5 | 0xad | 0xbd | 0xb9 | 0xa1 | 0xb1  => {
+                    self.lda(&op.mode);
                 }
 
-                0x85 => {
-                    self.sta(&AddressingMode::ZeroPage);
-                    self.program_counter += 1;
-                }
-                0x95 => {
-                    self.sta(&AddressingMode::ZeroPage_X);
-                    self.program_counter += 1;
-                }
-                0x8D => {
-                    self.sta(&AddressingMode::Absolute);
-                    self.program_counter += 2;
-                }
-                0x9D => {
-                    self.sta(&AddressingMode::Absolute_X);
-                    self.program_counter += 2;
-                }
-                0x99 => {
-                    self.sta(&AddressingMode::Absolute_Y);
-                    self.program_counter += 2;
-                }
-                0x81 => {
-                    self.sta(&AddressingMode::Indirect_X);
-                    self.program_counter += 1;
-                }
-                0x91 => {
-                    self.sta(&AddressingMode::Indirect_Y);
-                    self.program_counter += 1;
+                0x85 | 0x95 | 0x8d | 0x9d | 0x99 | 0x81 | 0x91 => {
+                    self.sta(&op.mode);
                 }
 
                 0xAA => self.tax(),
@@ -186,9 +135,11 @@ impl CPU {
                 0xE8 => self.inx(),
 
                 0x00 => return,
-                
-                _ => todo!()
+
+                _ => todo!(),
             }
+
+            self.program_counter += op.size - 1;
         }
     }
 
