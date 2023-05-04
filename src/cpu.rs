@@ -1,5 +1,7 @@
 use crate::opcodes;
 
+const STACK: u16 = 0x0100;
+
 pub struct CPU {
     pub register_a: u8,
     pub register_x: u8,
@@ -38,15 +40,21 @@ impl CPU {
         }
     }
 
-    // TODO fix this
     fn adc(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
         let value = self.mem_read(addr);
         let carry = self.get_carry_flag();
 
-        self.register_a = self.register_a.wrapping_add(value).wrapping_add(carry);
+        let result = self.register_a.wrapping_add(value).wrapping_add(carry);
+        let temp = self.register_a as usize + value as usize + carry as usize;
+
+        let new_carry = (temp > 0xff) as u8;
+        let overflow = (self.register_a ^ result) & (value ^ result) & 0b1000_0000;
+
+        self.register_a = result;
         self.update_zero_and_negative_flags(self.register_a);
-        self.set_carry_flag(carry);
+        self.set_carry_flag(new_carry);
+        self.set_overflow_flag(overflow >> 7);
     }
 
     fn and(&mut self, mode: &AddressingMode) {
@@ -59,34 +67,35 @@ impl CPU {
 
     fn asl(&mut self, mode: &AddressingMode) {
         let result: u8;
+        let carry: u8;
 
         match mode {
             AddressingMode::NoneAddressing => {
-                let carry = self.register_a >> 7;
-                self.register_a <<= 1;
-                self.set_carry_flag(carry);
+                carry = self.register_a >> 7;
 
+                self.register_a <<= 1;
                 result = self.register_a;
             }
 
             _ => {
                 let addr = self.get_operand_address(mode);
                 let value = self.mem_read(addr);
-                let carry = value >> 7;
+
+                carry = value >> 7;
                 result = value << 1;
 
                 self.mem_write(addr, result);
-                self.set_carry_flag(carry);
             }
         }
 
+        self.set_carry_flag(carry);
         self.update_zero_and_negative_flags(result);
     }
 
     fn bcc(&mut self, mode: &AddressingMode) {
         let value = self.get_operand_address(mode);
 
-        if self.status & self.get_carry_flag() == 0 {
+        if self.get_carry_flag() == 0 {
             self.program_counter = self.program_counter.wrapping_add(value);
         }
     }
@@ -102,7 +111,7 @@ impl CPU {
     fn beq(&mut self, mode: &AddressingMode) {
         let value = self.get_operand_address(mode);
 
-        if self.get_zero_flag(true) == 0 {
+        if self.get_zero_flag() == 1 {
             self.program_counter = self.program_counter.wrapping_add(value);
         }
     }
@@ -127,7 +136,7 @@ impl CPU {
     fn bmi(&mut self, mode: &AddressingMode) {
         let value = self.get_operand_address(mode);
 
-        if self.get_negative_flag(true) == 1 {
+        if self.get_negative_flag() == 1 {
             self.program_counter = self.program_counter.wrapping_add(value);
         }
     }
@@ -135,7 +144,7 @@ impl CPU {
     fn bne(&mut self, mode: &AddressingMode) {
         let value = self.get_operand_address(mode);
 
-        if self.get_zero_flag(true) == 0 {
+        if self.get_zero_flag() == 0 {
             self.program_counter = self.program_counter.wrapping_add(value);
         }
     }
@@ -143,7 +152,7 @@ impl CPU {
     fn bpl(&mut self, mode: &AddressingMode) {
         let value = self.get_operand_address(mode);
 
-        if self.get_negative_flag(true) == 0 {
+        if self.get_negative_flag() == 0 {
             self.program_counter = self.program_counter.wrapping_add(value);
         }
     }
@@ -155,7 +164,7 @@ impl CPU {
     fn bvc(&mut self, mode: &AddressingMode) {
         let value = self.get_operand_address(mode);
 
-        if self.get_overflow_flag(true) == 0 {
+        if self.get_overflow_flag() == 0 {
             self.program_counter = self.program_counter.wrapping_add(value);
         }
     }
@@ -163,7 +172,7 @@ impl CPU {
     fn bvs(&mut self, mode: &AddressingMode) {
         let value = self.get_operand_address(mode);
 
-        if self.get_overflow_flag(true) == 1 {
+        if self.get_overflow_flag() == 1 {
             self.program_counter = self.program_counter.wrapping_add(value);
         }
     }
@@ -280,6 +289,7 @@ impl CPU {
         let value = self.mem_read(addr);
 
         let result = value.wrapping_add(1);
+
         self.mem_write(addr, result);
         self.update_zero_and_negative_flags(result);
     }
@@ -302,14 +312,11 @@ impl CPU {
 
     fn jsr(&mut self, mode: &AddressingMode) {
         let addr = self.get_operand_address(mode);
-        let value = self.mem_read(addr).wrapping_sub(1);
+        let value = self.mem_read_u16(addr);
 
-        self.mem_write_u16(
-            self.stack_pointer as u16,
-            self.program_counter.wrapping_sub(1),
-        );
+        self.stack_push_u16(self.program_counter + 2);
 
-        self.program_counter = value as u16;
+        self.program_counter = value;
     }
 
     fn lda(&mut self, mode: &AddressingMode) {
@@ -460,8 +467,21 @@ impl CPU {
     }
 
     fn sbc(&mut self, mode: &AddressingMode) {
-        // TODO implement this using adc
-        self.adc(mode);
+        let addr = self.get_operand_address(mode);
+        let value = self.mem_read(addr);
+        let carry = !self.get_carry_flag() & 0b0000_0001;
+
+        let result = self.register_a.wrapping_sub(value).wrapping_sub(carry);
+        let temp = self.register_a as usize - value as usize - carry as usize;
+
+        let new_carry = (temp > 0xff) as u8;
+        let negative = !value + 1;
+        let overflow = (self.register_a ^ result) & (negative ^ result) & 0b1000_0000;
+
+        self.register_a = result;
+        self.update_zero_and_negative_flags(self.register_a);
+        self.set_carry_flag(new_carry);
+        self.set_overflow_flag(overflow >> 7);
     }
 
     fn sec(&mut self) {
@@ -521,7 +541,7 @@ impl CPU {
     }
 
     fn update_zero_and_negative_flags(&mut self, result: u8) {
-        self.set_zero_flag(result);
+        self.set_zero_flag((result == 0) as u8);
         self.set_negative_flag((result & 0b1000_0000) >> 7)
     }
 
@@ -585,64 +605,22 @@ impl CPU {
         self.status & 0b0000_0001
     }
 
-    fn get_zero_flag(&mut self, auto_shift: bool) -> u8 {
+    fn get_zero_flag(&mut self) -> u8 {
         let result = self.status & 0b0000_0010;
 
-        if auto_shift {
-            result >> 1
-        } else {
-            result
-        }
+        result >> 1
     }
 
-    fn get_interrupt_disable(&mut self, auto_shift: bool) -> u8 {
-        let result = self.status & 0b0000_0100;
-
-        if auto_shift {
-            result >> 2
-        } else {
-            result
-        }
-    }
-
-    fn get_decimal_mode_flag(&mut self, auto_shift: bool) -> u8 {
-        let result = self.status & 0b0000_1000;
-
-        if auto_shift {
-            result >> 3
-        } else {
-            result
-        }
-    }
-
-    fn get_break_command(&mut self, auto_shift: bool) -> u8 {
-        let result = self.status & 0b0001_0000;
-
-        if auto_shift {
-            result >> 4
-        } else {
-            result
-        }
-    }
-
-    fn get_overflow_flag(&mut self, auto_shift: bool) -> u8 {
+    fn get_overflow_flag(&mut self) -> u8 {
         let result = self.status & 0b0100_0000;
 
-        if auto_shift {
-            result >> 6
-        } else {
-            result
-        }
+        result >> 6
     }
 
-    fn get_negative_flag(&mut self, auto_shift: bool) -> u8 {
+    fn get_negative_flag(&mut self) -> u8 {
         let result = self.status & 0b1000_0000;
 
-        if auto_shift {
-            result >> 7
-        } else {
-            result
-        }
+        result >> 7
     }
 
     pub fn mem_read(&self, addr: u16) -> u8 {
@@ -664,6 +642,31 @@ impl CPU {
         let lo = (data & 0xff) as u8;
         self.mem_write(pos, lo);
         self.mem_write(pos + 1, hi);
+    }
+
+    fn stack_push(&mut self, value: u8) {
+        self.mem_write(STACK as u16 + self.stack_pointer as u16, value);
+        self.stack_pointer = self.stack_pointer.wrapping_sub(1);
+    }
+
+    fn stack_push_u16(&mut self, value: u16) {
+        let hi = (value >> 8) as u8;
+        let lo = (value & 0b1111_1111) as u8;
+
+        self.stack_push(hi);
+        self.stack_push(lo);
+    }
+
+    fn stack_pop(&mut self) -> u8 {
+        self.stack_pointer = self.stack_pointer.wrapping_add(1);
+        self.mem_read(STACK + self.stack_pointer as u16)
+    }
+
+    fn stack_pop_u16(&mut self) -> u16 {
+        let hi = self.stack_pop() as u16;
+        let lo = self.stack_pop() as u16;
+
+        hi << 8 | lo
     }
 
     pub fn reset(&mut self) {
@@ -706,14 +709,17 @@ impl CPU {
 
                 0x90 => {
                     self.bcc(&op.mode);
+                    continue;
                 }
 
                 0xb0 => {
                     self.bcs(&op.mode);
+                    continue;
                 }
 
                 0xf0 => {
                     self.beq(&op.mode);
+                    continue;
                 }
 
                 0x24 | 0x2c => {
@@ -722,14 +728,17 @@ impl CPU {
 
                 0x30 => {
                     self.bmi(&op.mode);
+                    continue;
                 }
 
                 0xd0 => {
                     self.bne(&op.mode);
+                    continue;
                 }
 
                 0x10 => {
                     self.bpl(&op.mode);
+                    continue;
                 }
 
                 0x00 => {
@@ -739,10 +748,12 @@ impl CPU {
 
                 0x50 => {
                     self.bvc(&op.mode);
+                    continue;
                 }
 
                 0x70 => {
                     self.bvs(&op.mode);
+                    continue;
                 }
 
                 0x18 => {
@@ -803,10 +814,12 @@ impl CPU {
 
                 0x4c | 0x6c => {
                     self.jmp(&op.mode);
+                    break;
                 }
 
                 0x20 => {
                     self.jsr(&op.mode);
+                    break;
                 }
 
                 0xa9 | 0xa5 | 0xb5 | 0xad | 0xbd | 0xb9 | 0xa1 | 0xb1 => {
@@ -958,6 +971,11 @@ impl CPU {
                 addr
             }
 
+            // TODO implement
+            /*
+            AddressingMode::Indirect => {
+            }
+            */
             AddressingMode::Indirect_X => {
                 let base = self.mem_read(counter);
 
@@ -993,15 +1011,15 @@ mod tests {
         let mut cpu = CPU::new();
         cpu.load_and_run(vec![0xa9, 0x05, 0x00]);
         assert_eq!(cpu.register_a, 5);
-        assert!(cpu.status & 0b0000_0010 == 0);
-        assert!(cpu.status & 0b1000_0000 == 0);
+        assert_eq!(cpu.get_zero_flag(), 0);
+        assert_eq!(cpu.get_negative_flag(), 0);
     }
 
     #[test]
     fn test_0xa9_lda_zero_flag() {
         let mut cpu = CPU::new();
         cpu.load_and_run(vec![0xa9, 0x00, 0x00]);
-        assert!(cpu.status & 0b0000_0010 == 0b10);
+        assert_eq!(cpu.get_zero_flag(), 1);
     }
 
     #[test]
@@ -1037,5 +1055,109 @@ mod tests {
         cpu.load_and_run(vec![0xa5, 0x10, 0x00]);
 
         assert_eq!(cpu.register_a, 0x55);
+    }
+
+    #[test]
+    fn test_set_carry() {
+        let mut cpu = CPU::new();
+
+        assert_eq!(cpu.get_carry_flag(), 0);
+
+        cpu.load_and_run(vec![0x38, 0x00]);
+
+        assert_eq!(cpu.get_carry_flag(), 1);
+    }
+
+    #[test]
+    fn test_adc_overflow() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xa9, 0xff, 0x38, 0x69, 0x02, 0x00]);
+
+        assert_eq!(cpu.register_a, 0x02);
+        assert_eq!(cpu.get_carry_flag(), 1);
+        assert_eq!(cpu.get_overflow_flag(), 0);
+    }
+
+    #[test]
+    fn test_sbc_overflow() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xa9, 0x80, 0xe9, 0x01, 0x00]);
+        assert_eq!(cpu.register_a, 126);
+        assert_eq!(cpu.get_overflow_flag(), 1);
+        assert_eq!(cpu.get_carry_flag(), 0);
+    }
+
+    #[test]
+    fn test_and() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xa9, 0x80, 0x29, 0x80, 0x00]);
+        assert_eq!(cpu.register_a, 0x80);
+    }
+
+    #[test]
+    fn test_asl() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0xa9, 0x02, 0x0a, 0x00]);
+        assert_eq!(cpu.register_a, 4);
+        assert_eq!(cpu.get_carry_flag(), 0);
+    }
+
+    #[test]
+    fn test_branch() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0x90, 0x0a, 0x00]);
+        assert_eq!(cpu.program_counter, 0x800a);
+    }
+
+    #[test]
+    fn test_bit_test() {
+        let mut cpu = CPU::new();
+        cpu.mem_write(0x10, 0xff);
+        cpu.load_and_run(vec![0xa9, 0xff, 0x24, 0x10, 0x00]);
+        assert_eq!(cpu.get_zero_flag(), 0);
+        assert_eq!(cpu.get_overflow_flag(), 1);
+        assert_eq!(cpu.get_negative_flag(), 1);
+    }
+
+    #[test]
+    fn test_cmp() {
+        let mut cpu = CPU::new();
+        cpu.mem_write(0x10, 0x05);
+        cpu.load_and_run(vec![0xa9, 0x02, 0xc9, 0x10, 0x00]);
+        assert_eq!(cpu.get_negative_flag(), 1);
+        assert_eq!(cpu.get_zero_flag(), 0);
+        assert_eq!(cpu.get_carry_flag(), 0);
+    }
+
+    #[test]
+    fn test_dec() {
+        let mut cpu = CPU::new();
+        cpu.mem_write(0x10, 0x05);
+        cpu.load_and_run(vec![0xc6, 0x10, 0x00]);
+        assert_eq!(cpu.mem_read(0x10), 0x04);
+    }
+
+    #[test]
+    fn test_eor() {
+        let mut cpu = CPU::new();
+        cpu.mem_write(0x10, 0xff);
+        cpu.load_and_run(vec![0xa9, 0x0f, 0x45, 0x10, 0x00]);
+        assert_eq!(cpu.register_a, 0xf0);
+    }
+
+    #[test]
+    fn test_jmp() {
+        let mut cpu = CPU::new();
+        cpu.load_and_run(vec![0x4c, 0x00, 0x62]);
+        assert_eq!(cpu.program_counter, 0x6200);
+    }
+
+    #[test]
+    fn test_jsr() {
+        let mut cpu = CPU::new();
+        cpu.mem_write_u16(0x1000, 0x6032);
+        cpu.load_and_run(vec![0x20, 0x00, 0x10, 0x00]);
+        assert_eq!(cpu.program_counter, 0x6032);
+        assert_eq!(cpu.stack_pop_u16(), 0x0208);
     }
 }
