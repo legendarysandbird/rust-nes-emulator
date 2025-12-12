@@ -1,4 +1,4 @@
-use crate::opcodes::OpCode;
+use crate::opcodes;
 
 const STACK: u16 = 0x0100;
 
@@ -604,27 +604,19 @@ impl CPU {
     }
 
     pub fn run(&mut self) {
-        let dispatch = OpCode::get_dispatch();
+        let dispatch = opcodes::OpCode::get_dispatch();
 
         loop {
             let code = self.mem_read(self.program_counter);
             let op = &dispatch[&code];
             (op.operation)(self, &op.mode);
 
-            match code {
-                0x90 | 0xb0 | 0xf0 | 0x30 | 0xd0 | 0x10 | 0x50 | 0x70 => {
-                    continue;
-                }
-
-                0x4c | 0x6c | 0x20 => {
-                    break;
-                }
-
-                0x00 => {
-                    return;
-                }
-
-                _ => (),
+            use opcodes::ControlFlow;
+            match op.control_flow {
+                ControlFlow::Continue => continue,
+                ControlFlow::Break => break,
+                ControlFlow::Return => return,
+                ControlFlow::None => (),
             }
 
             self.program_counter += op.size;
