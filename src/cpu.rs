@@ -21,6 +21,7 @@ pub enum AddressingMode {
     Absolute,
     AbsoluteX,
     AbsoluteY,
+    Indirect,
     IndirectX,
     IndirectY,
     NoneAddressing,
@@ -542,9 +543,9 @@ impl CPU {
     }
 
     pub fn mem_read_u16(&self, pos: u16) -> u16 {
-        let lo = self.mem_read(pos) as u16;
-        let hi = self.mem_read(pos + 1) as u16;
-        (hi << 8) | lo
+        let lo = self.mem_read(pos);
+        let hi = self.mem_read(pos + 1);
+        u16::from_le_bytes([lo, hi])
     }
 
     fn mem_write(&mut self, addr: u16, data: u8) {
@@ -653,26 +654,22 @@ impl CPU {
                 base.wrapping_add(self.register_x as u16)
             }
 
-            // TODO implement
-            /*
             AddressingMode::Indirect => {
+                let base = self.mem_read_u16(counter);
+                self.mem_read_u16(base as u16)
             }
-            */
+
             AddressingMode::IndirectX => {
                 let base = self.mem_read(counter);
 
                 let ptr: u8 = base.wrapping_add(self.register_x);
-                let lo = self.mem_read(ptr as u16);
-                let hi = self.mem_read(ptr.wrapping_add(1) as u16);
-                (hi as u16) << 8 | (lo as u16)
+                self.mem_read_u16(ptr as u16)
             }
 
             AddressingMode::IndirectY => {
                 let base = self.mem_read(counter);
 
-                let lo = self.mem_read(base as u16);
-                let hi = self.mem_read(base.wrapping_add(1) as u16);
-                let deref_base = (hi as u16) << 8 | (lo as u16);
+                let deref_base = self.mem_read_u16(base as u16);
                 deref_base.wrapping_add(self.register_y as u16)
             }
 

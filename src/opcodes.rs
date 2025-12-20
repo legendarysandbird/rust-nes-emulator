@@ -137,8 +137,7 @@ impl OpCode {
             (0xc8, OpCode::new("INY", CPU::iny, 1, 2, ExtraCycleMode::None, AddressingMode::NoneAddressing, ControlFlow::None)),
 
             (0x4c, OpCode::new("JMP", CPU::jmp, 3, 3, ExtraCycleMode::None, AddressingMode::Absolute, ControlFlow::Break)),
-            // TODO fix address mode
-            (0x6c, OpCode::new("JMP", CPU::jmp, 3, 5, ExtraCycleMode::None, AddressingMode::IndirectX, ControlFlow::Break)),
+            (0x6c, OpCode::new("JMP", CPU::jmp, 3, 5, ExtraCycleMode::None, AddressingMode::Indirect, ControlFlow::Break)),
 
             (0x20, OpCode::new("JSR", CPU::jsr, 3, 6, ExtraCycleMode::None, AddressingMode::Absolute, ControlFlow::Break)),
 
